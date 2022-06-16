@@ -21,7 +21,7 @@ pub mod methods{
     pub const STOP_SERVICE_ACK:u8 = 0x34;
 
     // These pertain to service callers
-    pub const CALL:u8 = 0x10;
+    pub const CALL:u8 = 0x0A;       //PRIORITY : CHANGE TO SMTH ELSE!! 
     pub const REG_CALLER:u8 = 0x40;
     pub const REG_CALLER_ACK:u8 = 0x41;
     pub const STOP_CALLER:u8 = 0x42;
@@ -34,10 +34,10 @@ pub mod methods{
     pub const BROADCAST_REG_ACK:u8 = 0x61;
 
     // Stream Receiver
-    pub const BROADCAST_RECV_ACK:u8 = 0x70;
-    pub const BROADCAST_RECV_RDY:u8 = 0x80;
-    pub const BROADCAST_RECV_REG:u8 = 0x90;
-    pub const BROADCAST_RECV_REG_ACK:u8 = 0x91;
+    pub const BROADCAST_RECV_ACK:u8 = 0x80;
+    pub const BROADCAST_RECV_RDY:u8 = 0x81;
+    pub const BROADCAST_RECV_REG:u8 = 0x82;
+    pub const BROADCAST_RECV_REG_ACK:u8 = 0x83;
 
 }
 

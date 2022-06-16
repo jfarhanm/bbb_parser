@@ -53,6 +53,21 @@ impl ParsedFrame{
         frame
     }
 
+    pub fn with_size(header:u8,size:usize)->Self{
+        let mut frame = Self::default();
+        frame.header = header;
+        frame.data_size=Some(size);
+        frame
+    }
+
+    pub fn header(&self)->u8{
+        self.header
+    }
+
+    pub fn size(&self)->Option<usize>{
+        self.data_size
+    }
+
 }
 
 impl Default for ParsedFrame{
@@ -86,7 +101,7 @@ impl fmt::Debug for ParsedFrame{
 // TODO (jfarhanm) : Test marked
 pub enum ParseResult{
     Frame(ParsedFrame),
-    IncompleteFrame(usize),
+    IncompleteFrame(ParsedFrame),
     ParseError(&'static str),  //TODO define error types
     DebugOk,
     Debug
@@ -139,8 +154,9 @@ impl BBBParse{
         Err("Text could not be parsed")
     }
 
+    // TODO : new idea return whatever has been parsed through IncompleteFrame()        -- DONE
+    // TODO : Test Above 
     
-    // TODO : data.len() is not what IncompleteFrame should return by any means
     // TODO : Make this more lisp-like. More Cons-ey 
     pub fn parse(&mut self, data:&[u8])->ParseResult{
         
@@ -150,7 +166,7 @@ impl BBBParse{
                 if let Some(v)= data_iter.next(){ 
                     self.header_type = Some(*v)
                 }else{
-                    return ParseResult::IncompleteFrame(1);
+                    return ParseResult::IncompleteFrame(ParsedFrame::with_header(ERR));
                 }
                 self.parse_cursor = Some(2);
             }else{
@@ -167,7 +183,7 @@ impl BBBParse{
                     if let Ok(parsed) = self.parse_textual(text_data){
                         return ParseResult::Frame(ParsedFrame::with_text(REG_CALLER,parsed));
                     }else{
-                        return ParseResult::IncompleteFrame(data.len());
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_CALLER));
                     }
                 }
 
@@ -176,7 +192,7 @@ impl BBBParse{
                     if let Ok(parsed) = self.parse_textual(text_data){
                         return ParseResult::Frame(ParsedFrame::with_text(REG_SERVICE,parsed));
                     }else{
-                        return ParseResult::IncompleteFrame(data.len());
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE) );
                     }
                 }
 
@@ -199,7 +215,7 @@ impl BBBParse{
                     if let Ok(parsed) = self.parse_textual(text_data){
                         self.data_bytes = Some(parsed.parse::<usize>().unwrap());
                     }else{
-                        return ParseResult::IncompleteFrame(data.len());
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(CALL));
                     }
                 },
 
@@ -214,11 +230,11 @@ impl BBBParse{
                             self.data_bytes = Some(parsed.parse::<usize>().expect("Incorrect Number of Bytes"));
                             self.incr_parse_cursor(2); 
                         }else{
-                            return ParseResult::IncompleteFrame(data.len());
+                            return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(CALLRESP,None,self.error_bytes,None));
                         }
 
                     }else{
-                        return ParseResult::IncompleteFrame(data.len())
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(CALLRESP))
                     }
                 },
                 
@@ -234,7 +250,7 @@ impl BBBParse{
                             return ParseResult::Frame(ParsedFrame::with_all(REG_SERVICE_ACK,id_start,id_end,result_type,None));
                         } 
                     }else{
-                        return ParseResult::IncompleteFrame(data.len())
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE_ACK) );
                     }
                 },
                 
@@ -252,6 +268,8 @@ impl BBBParse{
                             return ParseResult::Frame(ParsedFrame::with_all(REG_CALLER_ACK,id_start,id_end,result_type,None));
                         } 
 
+                    }else{
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE_ACK));
                     }
                 },
                 
@@ -265,7 +283,7 @@ impl BBBParse{
                             return ParseResult::Frame(ParsedFrame::with_all_raw(STOP_SERVICE_ACK,None,Some(result_type),None));
                         } 
                     }else{
-                        return ParseResult::IncompleteFrame(data.len())
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(STOP_SERVICE_ACK))
                     }
                 },
 
@@ -279,7 +297,7 @@ impl BBBParse{
                             return ParseResult::Frame(ParsedFrame::with_all_raw(STOP_CALLER_ACK,None,Some(result_type),None));
                         } 
                     }else{
-                        return ParseResult::IncompleteFrame(data.len())
+                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(STOP_CALLER_ACK))
                     }
 
                 }
@@ -306,10 +324,10 @@ impl BBBParse{
 
             }else{
                 // NOTE (jfarhan): Return Error?
-                return ParseResult::IncompleteFrame(data.len())
+                return ParseResult::IncompleteFrame(ParsedFrame::with_header(ERR))
             }
         }else{
-            return ParseResult::IncompleteFrame(data.len())
+            return ParseResult::IncompleteFrame(ParsedFrame::with_size(self.header_type.unwrap(),self.data_bytes.unwrap()))
         }
     }
 }
@@ -327,8 +345,8 @@ impl fmt::Debug for ParseResult{
             ParseResult::Frame(data) =>{
                 write!(f,"Frame({:#?})",data)
             }
-            ParseResult::IncompleteFrame(size) =>{
-                write!(f,"IncompleteFrame:{}",size)
+            ParseResult::IncompleteFrame(frame) =>{
+                write!(f,"IncompleteFrame:{:#?}",frame)
             }
             ParseResult::ParseError(size) =>{
                 write!(f,"ParseError : {}",size)
