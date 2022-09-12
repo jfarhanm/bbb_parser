@@ -6,12 +6,19 @@ pub struct ParsedFrame{
     data_size:Option<usize>,
     result_type:Option<(u8,u8)>,
     data:Option<(usize,usize)>,     //(start,end)
-    text:Option<String>
+    text:Option<Vec<String>>
 }
 impl ParsedFrame{
-    pub fn with_text(header:u8,text:String)->Self{
+    pub fn with_text_single(header:u8,text:String)->Self{
         let mut frame = Self::default();
-        frame.text = Some(text);
+        frame.text = Some(vec![text]);
+        frame.header = header;
+        frame
+    }
+
+    pub fn with_text_list(header:u8,text_list:Vec<String>)->Self{
+        let mut frame = Self::default();
+        frame.text = Some(text_list);
         frame.header = header;
         frame
     }
@@ -25,7 +32,7 @@ impl ParsedFrame{
     }
 
     // NOTE : deprecated use with_all_raw
-    pub fn with_all(header:u8,data_start:usize,data_end:usize, result_type:(u8,u8),text:Option<String>)->Self{
+    pub fn with_all(header:u8,data_start:usize,data_end:usize, result_type:(u8,u8),text:Option<Vec<String>>)->Self{
         let mut frame= Self::default();
         frame.header = header;
         frame.data_size = Some(data_end - data_start);
@@ -35,7 +42,7 @@ impl ParsedFrame{
         frame
     }
     
-    pub fn with_all_raw(header:u8,data_bounds:Option<(usize,usize)>, result_type:Option<(u8,u8)>,text:Option<String>)->Self{ 
+    pub fn with_all_raw(header:u8,data_bounds:Option<(usize,usize)>, result_type:Option<(u8,u8)>,text:Option<Vec<String>>)->Self{ 
         let mut frame= Self::default();
         frame.header = header;
         frame.data_size = if let Some(v) = data_bounds{Some(v.1-v.0)}else{None};
@@ -67,7 +74,34 @@ impl ParsedFrame{
     pub fn size(&self)->Option<usize>{
         self.data_size
     }
+    
+    // Retrieves first line of text 
+    pub fn text(&self)->Option<String>{
+        if let Some(v) = &self.text{
+            if let Some(w) = v.iter().next(){
+                return Some(w.clone())
+            }        
+        }
+        None
+    }
+    
+    pub fn text_list(&self)->Option<&Vec<String>>{
+            self.text.as_ref()
+    }
+    
+    // NOTE: Add Some sort of warning here 
+    // The max value that can be received here is 2^16 -2 | 0xFFFF is needed for delimiting 
+    // Only to be used when result is used as a single number 
+    // TEST : RESULT_TO_USIZE
+    pub fn result_as_usize(&self)->Option<usize>{
+        // Byte 0 is LSB , Byte 1 is MSB  
+        if let Some(m) = self.result_type{
+            Some(u32::from_le_bytes([0,0,m.1,m.0]) as usize)
+        }else{
+            None
+        }
 
+    }
 }
 
 impl Default for ParsedFrame{
@@ -112,7 +146,7 @@ pub struct BBBParse{
     data_bytes:Option<usize>,
     header_type:Option<u8>,
     parse_cursor:Option<usize>,
-    error_bytes:Option<(u8,u8)>
+    status_bytes:Option<(u8,u8)>
 }
 impl BBBParse{
     pub fn new()->Self{
@@ -120,7 +154,7 @@ impl BBBParse{
             data_bytes:None,
             parse_cursor:None,
             header_type:None,
-            error_bytes:None
+            status_bytes:None
         }
     }
     
@@ -139,6 +173,7 @@ impl BBBParse{
             return  std::char::from_digit(code as u32,10).unwrap();
         }
     }
+
     pub fn parse_textual(&mut self,data:&[u8])->Result<String,&'static str>{  
         if let Some(point) = data.iter().position(|x|{*x==protocol_defs::CR}){
             println!("Found Parse textual {}",point);
@@ -153,10 +188,33 @@ impl BBBParse{
         }
         Err("Text could not be parsed")
     }
-
-    // TODO : new idea return whatever has been parsed through IncompleteFrame()        -- DONE
-    // TODO : Test Above 
     
+    // NOTE  : BAD repeated code here
+    // NOTE  : Would be a good idea to make a make a ParseTextualResult type instead of tuple  
+    // TEST: ETX TXT 
+    pub fn parse_textual_etx_delim(&mut self, data:&[u8]) ->Result<(String,bool),&'static str>{
+        if let Some(point) = data.iter().position(|x|{*x==protocol_defs::ETX||*x==protocol_defs::CR}){
+            println!("Found Parse textual ETX {}",point);
+            let (m,_) = data.split_at(point);
+
+            let name = m.iter().map(|d|{
+                Self::u8_to_char(*d)
+            }).collect::<String>();
+
+            println!("name : {}",name);
+            self.incr_parse_cursor(point+1);
+
+            if data[point] == protocol_defs::ETX{
+                return Ok((name,true))
+            }
+            return Ok((name,false))
+        }
+        Err("Text could not be parsed")
+    }
+    
+    // TODO : Solve Empty slice error 
+    // TODO : new idea return whatever has been parsed through IncompleteFrame()        -- DONE
+    // TODO : Test Above  
     // TODO : Make this more lisp-like. More Cons-ey 
     pub fn parse(&mut self, data:&[u8])->ParseResult{
         
@@ -178,19 +236,29 @@ impl BBBParse{
         if let None = self.data_bytes{
             match self.header_type.unwrap(){
                 // The only argument for a REG_CALLER or reg_service is a string
+                // TEST : REG_CALLER
                 REG_CALLER=>{
-                    let (_,text_data) = data.split_at(self.parse_cursor.unwrap());
-                    if let Ok(parsed) = self.parse_textual(text_data){
-                        return ParseResult::Frame(ParsedFrame::with_text(REG_CALLER,parsed));
-                    }else{
-                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_CALLER));
+                    println!("REG_CALLER_HERE");    //XXX
+                    let text_data = data;
+                    let init_parse_cursor = self.parse_cursor;
+                    let mut text_list:Vec<String> = Vec::new();
+                    loop{
+                        if let Ok(parsed) = self.parse_textual_etx_delim(&text_data[self.parse_cursor.unwrap()..]){
+                            text_list.push(parsed.0); 
+                            if !parsed.1{      // IF CR instead of ETX 
+                                return ParseResult::Frame(ParsedFrame::with_text_list(REG_CALLER,text_list));
+                            }
+                        }else{
+                            self.parse_cursor = init_parse_cursor;
+                            return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_CALLER));
+                        }
                     }
                 }
 
                 REG_SERVICE =>{                 
                     let (_,text_data) = data.split_at(self.parse_cursor.unwrap());
                     if let Ok(parsed) = self.parse_textual(text_data){
-                        return ParseResult::Frame(ParsedFrame::with_text(REG_SERVICE,parsed));
+                        return ParseResult::Frame(ParsedFrame::with_text_single(REG_SERVICE,parsed));
                     }else{
                         return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE) );
                     }
@@ -208,14 +276,24 @@ impl BBBParse{
                 
                 
                 // CALL and CALL_RESP have data packets
+                // STATUS BYTES REPRESENT THE SERVICE BEING CALLED 
+                // TEST : CALL
                 CALL =>{
-                    let (_,text_data) = data.split_at(self.parse_cursor.unwrap());
-                    
-                    // Internally updates cursor
-                    if let Ok(parsed) = self.parse_textual(text_data){
-                        self.data_bytes = Some(parsed.parse::<usize>().unwrap());
+                    println!("Enocuntered Call");//XXX
+                
+                    let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
+                    if let Some(_) = valid_data.get(2){
+                        self.status_bytes = Some((*valid_data.get(0).unwrap(),*valid_data.get(1).unwrap()) ); 
+                        // Internally updates cursor
+                        let (_,text_data) = valid_data.split_at(2);
+                        if let Ok(parsed) = self.parse_textual(text_data){
+                            self.data_bytes = Some(parsed.parse::<usize>().unwrap());
+                            self.incr_parse_cursor(2);
+                        }else{
+                            return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(CALL,None,self.status_bytes,None));
+                        }
                     }else{
-                        return ParseResult::IncompleteFrame(ParsedFrame::with_header(CALL));
+                            return ParseResult::IncompleteFrame(ParsedFrame::with_header(CALL));
                     }
                 },
 
@@ -223,14 +301,14 @@ impl BBBParse{
                     // Unless data is not found
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
                     if let Some(_) = valid_data.get(2){ 
-                        self.error_bytes = Some((*valid_data.get(0).unwrap(),*valid_data.get(1).unwrap()) ); 
-                        println!("ERROR BYTES : {:?}",self.error_bytes.unwrap());
+                        self.status_bytes = Some((*valid_data.get(0).unwrap(),*valid_data.get(1).unwrap()) ); 
+                        println!("ERROR BYTES : {:?}",self.status_bytes.unwrap());
                         let(_,text_data) = valid_data.split_at(2); 
                         if let Ok(parsed) = self.parse_textual(text_data){
                             self.data_bytes = Some(parsed.parse::<usize>().expect("Incorrect Number of Bytes"));
                             self.incr_parse_cursor(2); 
                         }else{
-                            return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(CALLRESP,None,self.error_bytes,None));
+                            return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(CALLRESP,None,self.status_bytes,None));
                         }
 
                     }else{
@@ -238,35 +316,57 @@ impl BBBParse{
                     }
                 },
                 
-                // TODO: test 
+                // TEST : REG_SERVICE_ACK 
                 REG_SERVICE_ACK =>{
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
                     if let Some(d) = valid_data.get(4){
-                        if *d==b'\n'{
+                        if *d==protocol_defs::END{
                             let mut valid_data_iter = valid_data.iter().enumerate();
                             let result_type = (*valid_data_iter.next().unwrap().1,*valid_data_iter.next().unwrap().1);
                             let id_start = self.parse_cursor.unwrap() + valid_data_iter.next().unwrap().0;
                             let id_end = self.parse_cursor.unwrap() + valid_data_iter.next().unwrap().0;
                             return ParseResult::Frame(ParsedFrame::with_all(REG_SERVICE_ACK,id_start,id_end,result_type,None));
-                        } 
+                        }else{
+                            return ParseResult::ParseError("Incorrectly parsed REG_SERVICE_ACK")
+                        }
                     }else{
                         return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE_ACK) );
                     }
                 },
-                
+               
+                // TODO : REFACTOR!
                 // TODO: test 
                 REG_CALLER_ACK =>{
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
-                    if let Some(d) = valid_data.get(6){
-                        if *d==b'\n'{
-                            let mut valid_data_iter = valid_data.iter().enumerate();
-                            let result_type = (*valid_data_iter.next().unwrap().1,*valid_data_iter.next().unwrap().1);
-                            let id_start = self.parse_cursor.unwrap() + valid_data_iter.next().unwrap().0; 
-                            valid_data_iter.next(); // FIXME DEBUG THIS   
-                            valid_data_iter.next(); // FIXME DEBUG THIS // ID: 2 bytes 
-                            let id_end = self.parse_cursor.unwrap() + valid_data_iter.next().unwrap().0;        // SERV_ID : 2 bytes
-                            return ParseResult::Frame(ParsedFrame::with_all(REG_CALLER_ACK,id_start,id_end,result_type,None));
-                        } 
+                    if let Some(_) = valid_data.get(2){
+                        let mut valid_data_iter = valid_data.iter().enumerate();
+                        let result_type = (*valid_data_iter.next().unwrap().1, *valid_data_iter.next().unwrap().1);
+                        //                                          [delimiter]
+                        // CALLER_ID | SERV_ID_A| SERVI_ID_B | ... | 0xFF | 0xFF
+                        loop{
+                            let byte_a = valid_data_iter.next();
+                            let byte_b = valid_data_iter.next();
+                            if let Some(a) = byte_a{
+                                if let Some(b) = byte_b{
+                                    if *a.1==0xFF&&*b.1==0xFF{
+                                        let cursor_pos = self.parse_cursor.unwrap() + b.0 -2;
+                                        let data_loc = (self.parse_cursor.unwrap()+2,cursor_pos);
+                                        // NOTE : Checks for <CR> at the end have not been done  
+                                        if let Some(v) = valid_data_iter.next(){
+                                            if *v.1==protocol_defs::CR{
+                                                return ParseResult::Frame(ParsedFrame::with_all_raw(REG_CALLER_ACK,Some(data_loc),Some(result_type),None));
+                                            }
+                                        }else{
+                                            return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(REG_CALLER_ACK,Some(data_loc),Some(result_type),None));
+                                        }
+                                    }
+                                }else{
+                                    return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(REG_CALLER_ACK,None,Some(result_type),None));
+                                }
+                            }else{
+                                return ParseResult::IncompleteFrame(ParsedFrame::with_all_raw(REG_CALLER_ACK,None,Some(result_type),None));
+                            }
+                        }
 
                     }else{
                         return ParseResult::IncompleteFrame(ParsedFrame::with_header(REG_SERVICE_ACK));
@@ -277,10 +377,12 @@ impl BBBParse{
                 STOP_SERVICE_ACK =>{
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
                     if let Some(d) = valid_data.get(2){
-                        if *d==b'\n'{
+                        if *d==protocol_defs::END{
                             let mut valid_data_iter = valid_data.iter().enumerate();
                             let result_type = (*valid_data_iter.next().unwrap().1,*valid_data_iter.next().unwrap().1);
                             return ParseResult::Frame(ParsedFrame::with_all_raw(STOP_SERVICE_ACK,None,Some(result_type),None));
+                        }else{
+                            return ParseResult::ParseError("Incorrectly parsed STOP_SERVICE_ACK")
                         } 
                     }else{
                         return ParseResult::IncompleteFrame(ParsedFrame::with_header(STOP_SERVICE_ACK))
@@ -291,10 +393,12 @@ impl BBBParse{
                 STOP_CALLER_ACK =>{
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
                     if let Some(d) = valid_data.get(2){
-                        if *d==b'\n'{
+                        if *d==protocol_defs::END{
                             let mut valid_data_iter = valid_data.iter().enumerate();
                             let result_type = (*valid_data_iter.next().unwrap().1,*valid_data_iter.next().unwrap().1);
                             return ParseResult::Frame(ParsedFrame::with_all_raw(STOP_CALLER_ACK,None,Some(result_type),None));
+                        }else{
+                            return ParseResult::ParseError("Incorrectly parsed STOP_CALLER_ACK")
                         } 
                     }else{
                         return ParseResult::IncompleteFrame(ParsedFrame::with_header(STOP_CALLER_ACK))
@@ -315,7 +419,7 @@ impl BBBParse{
             if *pos == protocol_defs::END{
                 let start = self.parse_cursor.unwrap()+1;       // NOTE: Could cause spaghetti code --2
                 let end = start+self.data_bytes.unwrap(); 
-                if let Some(v) = self.error_bytes{
+                if let Some(v) = self.status_bytes{
                     return ParseResult::Frame(ParsedFrame::with_all(self.header_type.unwrap(),start,end,v,None))
                 }else{
                     //  Ok check 

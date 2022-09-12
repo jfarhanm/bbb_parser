@@ -4,7 +4,7 @@ pub const RESP:u8 = 0x41;   //A
 pub const ACK:u8 = 0x69;
 pub const ERR:u8 = 0x70;
 pub const CR:u8 = 0x10;
-
+pub const ETX:u8 = 0x03;
 pub const START:u8 = 0xBB;
 pub const END:u8 = 0x10;
 pub mod methods{    
@@ -49,7 +49,7 @@ pub mod errors{
     pub const NAME_INVALID_ERROR:u8 =       0xA3;
     pub const ALREADY_EXISTS_ERROR:u8 =     0xA4;
     pub const DOES_NOT_EXIST_ERROR:u8 =     0xA5;
-
+    pub const INVALID_SERVICE_ID:u8 =       0xA6;
 }
 
 

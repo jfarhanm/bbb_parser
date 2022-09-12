@@ -3,6 +3,10 @@ pub mod protocol_defs;
 pub use parser::{ParseResult,ParsedFrame,BBBParse};
 
 #[cfg(test)]
+mod dev_tests;
+
+
+#[cfg(test)]
 mod tests {
 use crate::protocol_defs::{self,methods::*,errors::*,CR}; 
     #[test]
