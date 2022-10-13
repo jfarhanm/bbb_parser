@@ -86,7 +86,9 @@ impl ParsedFrame{
     }
     
     pub fn text_list(&self)->Option<&Vec<String>>{
-            self.text.as_ref()
+        // XXX : print statement 
+        println!("{:?}",self.text);
+        self.text.as_ref()
     }
     
     // NOTE: Add Some sort of warning here 
@@ -96,7 +98,7 @@ impl ParsedFrame{
     pub fn result_as_usize(&self)->Option<usize>{
         // Byte 0 is LSB , Byte 1 is MSB  
         if let Some(m) = self.result_type{
-            Some(u32::from_le_bytes([0,0,m.1,m.0]) as usize)
+            Some(u32::from_le_bytes([m.0,m.1,0,0]) as usize)
         }else{
             None
         }
@@ -279,11 +281,12 @@ impl BBBParse{
                 // STATUS BYTES REPRESENT THE SERVICE BEING CALLED 
                 // TEST : CALL
                 CALL =>{
-                    println!("Enocuntered Call");//XXX
-                
+                    println!("Encountered Call");//XXX
                     let (_,valid_data) = data.split_at(self.parse_cursor.unwrap());
+                    let byte_a = *valid_data.get(0).unwrap();
+                    let byte_b = *valid_data.get(1).unwrap();
                     if let Some(_) = valid_data.get(2){
-                        self.status_bytes = Some((*valid_data.get(0).unwrap(),*valid_data.get(1).unwrap()) ); 
+                        self.status_bytes = Some((byte_a,byte_b)); 
                         // Internally updates cursor
                         let (_,text_data) = valid_data.split_at(2);
                         if let Ok(parsed) = self.parse_textual(text_data){
